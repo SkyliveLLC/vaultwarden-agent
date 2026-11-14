@@ -15,13 +15,13 @@ export const ITEMS: Item[] = [
     folderId: "folder-agents",
     notes: "deploy notes",
     fields: [{ name: "api token", value: TOKEN }],
-    login: { username: "deploy@example.com", password: SECRET, totp: "JBSWY3DPEHPK3PXP", uris: [{ uri: "https://ops:uri-pass@dash.cloudflare.com/login?key=uri-key" }] },
+    login: { username: "deploy@example.com", password: SECRET, totp: "JBSWY3DPEHPK3PXP", uris: [{ uri: "https://ops:1234#uri-pass@dash.cloudflare.com/login?key=uri-key" }] },
   },
   { id: "id-stripe", name: "Stripe", collectionIds: ["collection-deploy"], login: { username: "ops", password: "sk_live_stripe" } },
   { id: "id-bank", name: "Bank", login: { username: "me", password: "bank-pass-999" } },
   // A secure note whose custom fields borrow the names of the login fields.
   { id: "id-db", name: "DB", fields: [{ name: "username", value: "custom-user-secret" }, { name: "uri", value: "postgres://app:db-pass@db/app" }] },
-  { id: "id-nas", name: "NAS", login: { username: "admin", uris: [{ uri: "admin:nas-pass@nas.local:5000/admin" }] } },
+  { id: "id-nas", name: "NAS", login: { username: "admin", uris: [{ uri: "admin:nas-pa#ss/w?rd@nas.local:5000/admin" }] } },
   { id: "id-cloudflare-2", name: "Cloudflare", login: { username: "other", password: "other-pass" } },
 ];
 

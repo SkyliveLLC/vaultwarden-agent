@@ -44,7 +44,8 @@ export function parseRef(ref: string): Ref {
  * login's own username. `read` returns it without `reveal`. A custom field or
  * identity property that is merely named `username` is not public.
  */
-const isPublic = (item: Item, field: string) => field === "username" && Boolean(item.login?.username);
+const PUBLIC_NAME = "username";
+const isPublic = (item: Item, field: string) => field === PUBLIC_NAME && Boolean(item.login?.username);
 
 const TOTP = "totp";
 
@@ -78,25 +79,21 @@ function storedFields(item: Item): Map<string, string> {
 /**
  * The part of a URI that search shows and matches: scheme and host. Userinfo,
  * path and query are dropped, because connection strings and webhook URLs keep
- * credentials there.
+ * credentials there. A password can itself contain `/`, `?` or `#`, so the host
+ * is taken to start after the last `@` anywhere in the URI. A path containing
+ * `@` then displays wrong, but no part of the userinfo can ever show.
  */
 function displayUri(uri: string): string {
-  if (uri.includes("://")) {
-    try {
-      const { protocol, host } = new URL(uri);
-      if (host) return `${protocol}//${host}`;
-    } catch {
-      // Fall through and trim it as plain text.
-    }
-  }
-  // No scheme, e.g. "user:pass@nas.local:5000/admin": keep what sits between the userinfo and the path.
-  return uri.replace(/^[^/?#]*@/, "").replace(/[/?#].*$/, "");
+  const scheme = /^[a-z][a-z\d+.-]*:\/\//i.exec(uri)?.[0] ?? "";
+  const afterUserinfo = uri.slice(Math.max(scheme.length, uri.lastIndexOf("@") + 1));
+  const host = afterUserinfo.replace(/[/?#\s][\s\S]*$/, "");
+  return host && scheme + host;
 }
 
 /** Field names an agent can reference on an item. `totp` is the current one-time code, computed on use. */
 const fieldNames = (item: Item) => [...new Set([...storedFields(item).keys(), ...(item.login?.totp ? [TOTP] : [])])];
 
-const displayUris = (item: Item) => item.login?.uris?.flatMap(({ uri }) => (uri ? [displayUri(uri)] : [])) ?? [];
+const displayUris = (item: Item) => item.login?.uris?.map(({ uri }) => displayUri(uri ?? "")).filter(Boolean) ?? [];
 
 export interface ItemSummary {
   /** Reference prefix: append `/<field>`. */
@@ -256,16 +253,19 @@ export function createVault({ loadConfig, bw, audit }: VaultDeps) {
     async read(ref: string): Promise<string> {
       const parsed = parseRef(ref);
       const profile = getProfile(await loadConfig(), parsed.profile);
-      const [resolved] = await resolveRefs([parsed]);
-      if (!resolved) throw new VaultError(`Could not resolve ${ref}.`);
-      if (isPublic(resolved.item, parsed.field)) return resolved.value;
-      if (!profile.reveal) {
-        throw new VaultError(
+      const refuse = () =>
+        new VaultError(
           `"${parsed.field}" is a secret and the "${parsed.profile}" profile doesn't allow reading secrets. ` +
             `Use it without reading it: ${BIN} run --env NAME=${ref} -- <command>. ` +
             "Only the user can change that, by turning on reveal for the profile in setup.",
         );
-      }
+      // Refuse before touching the vault, so a refused read costs no bw call and never asks for an unlock.
+      if (!profile.reveal && parsed.field !== PUBLIC_NAME) throw refuse();
+      const [resolved] = await resolveRefs([parsed]);
+      // resolveRefs returns one entry per reference or throws. This narrows the type.
+      if (!resolved) throw new VaultError(`Could not resolve ${ref}.`);
+      if (isPublic(resolved.item, parsed.field)) return resolved.value;
+      if (!profile.reveal) throw refuse();
       await audit({ action: "read", refs: [ref] });
       return resolved.value;
     },

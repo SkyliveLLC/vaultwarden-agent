@@ -31,10 +31,10 @@ describe("search", () => {
   it("matches only what it shows, so a query can't probe the hidden part of a URI", async () => {
     const { vault } = testVault({ work: SERVER });
     expect((await vault.search("dash.cloudflare")).items).toHaveLength(1);
-    for (const hidden of ["uri-pass", "uri-key", "login", "nas-pass"]) expect((await vault.search(hidden)).items).toEqual([]);
+    for (const hidden of ["uri-pass", "1234", "uri-key", "login", "nas-pa", "w?rd"]) expect((await vault.search(hidden)).items).toEqual([]);
   });
 
-  it("shows only the host of a URI saved without a scheme", async () => {
+  it("shows only the host of a URI saved without a scheme, whatever characters its password has", async () => {
     const { vault } = testVault({ work: SERVER });
     expect((await vault.search("NAS")).items[0]?.uris).toEqual(["nas.local:5000"]);
   });
@@ -121,6 +121,13 @@ describe("read", () => {
       await expect(vault.read(`bw://work/DB/${field}`)).rejects.toThrow(/doesn't allow reading secrets/);
     }
     expect(await vault.resolveForRun(["bw://work/DB/username"], "psql")).toEqual(["custom-user-secret"]);
+  });
+
+  it("refuses a secret on a locked vault without asking for an unlock", async () => {
+    const locked = fakeBw();
+    locked.state.locked = true;
+    const { vault } = testVault({ work: SERVER }, { work: locked });
+    await expect(vault.read("bw://work/Bank/password")).rejects.toThrow(/doesn't allow reading secrets/);
   });
 
   it("returns a secret, and audits it, when reveal is on", async () => {
