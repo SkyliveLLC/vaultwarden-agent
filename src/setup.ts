@@ -52,15 +52,18 @@ async function untilValid<T>(interactive: boolean, attempt: () => Promise<T>): P
 }
 
 /**
- * Unlocks one profile with the master password from a prompt, or from
- * BW_PASSWORD when there is no terminal. The password goes to bw and is not stored.
+ * Unlocks one profile with the master password from BW_PASSWORD, or from a
+ * prompt when it isn't set. The password goes to bw and is not stored.
  */
 async function unlockProfile(bw: Bw, name: string, interactive: boolean): Promise<void> {
-  await untilValid(interactive, async () => {
-    const password = interactive
-      ? await ask(p.password({ message: `Master password for "${name}"`, validate: required("the master password") }))
-      : process.env.BW_PASSWORD;
-    if (!password) throw new CliError("Set BW_PASSWORD when running without a terminal.");
+  // The variable wins even in a terminal, because agent shells often run commands in a pty.
+  const fromEnv = process.env.BW_PASSWORD;
+  await untilValid(interactive && !fromEnv, async () => {
+    const password =
+      fromEnv ??
+      (interactive
+        ? await ask(p.password({ message: `Master password for "${name}"`, validate: required("the master password") }))
+        : fail("Set BW_PASSWORD when running without a terminal."));
     await bw.unlock(password);
   });
 }
@@ -176,11 +179,16 @@ export async function setup(options: SetupOptions, script: string): Promise<void
 
 /** Picks the folders and collections the profile exposes. None means the whole vault. */
 async function chooseScope(bw: Bw, requested: string[] | undefined, saved: string[] = [], interactive: boolean): Promise<string[]> {
-  if (requested) return requested.filter(Boolean);
-  if (!interactive) return saved;
+  if (!requested && !interactive) return saved;
   const [folders, collections] = await Promise.all([bw.folders(), bw.collections()]);
   // bw lists "No Folder" with an empty ID.
   const names = [...new Set([...folders, ...collections].filter(({ id }) => id).map(({ name }) => name))];
+  if (requested) {
+    const scope = requested.filter(Boolean);
+    const unknown = scope.filter((name) => !names.includes(name));
+    if (unknown.length > 0) fail(`The vault has no folder or collection named ${unknown.join(", ")}. It has: ${names.join(", ") || "none"}.`);
+    return scope;
+  }
   if (names.length === 0) {
     p.log.info("The vault has no folders or collections, so agents can use every item. Add a folder and rerun setup to limit them.");
     return [];
@@ -247,7 +255,7 @@ export async function unlock(only: string | undefined): Promise<void> {
   if (only) getProfile(config, only);
   const names = only ? [only] : Object.keys(config.profiles);
   if (names.length === 0) throw new CliError(`No vault is configured. Run \`${BIN} setup\` first.`);
-  if (!interactive && names.length > 1) throw new CliError("Name the profile to unlock when running without a terminal.");
+  if ((!interactive || process.env.BW_PASSWORD) && names.length > 1) throw new CliError("Name the profile to unlock when the password comes from BW_PASSWORD.");
 
   for (const name of names) {
     const bw = createBw(name);

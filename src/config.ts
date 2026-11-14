@@ -88,7 +88,8 @@ export const saveConfig = (config: Config) => writePrivate(configPath(), `${JSON
 
 /** Looks a profile up by name, listing the configured ones when it's missing. */
 export function getProfile(config: Config, name: string): Profile {
-  const profile = config.profiles[name];
+  // hasOwn, so names like "constructor" don't match what every object inherits.
+  const profile = Object.hasOwn(config.profiles, name) ? config.profiles[name] : undefined;
   if (profile) return profile;
   const names = Object.keys(config.profiles);
   throw new ConfigError(

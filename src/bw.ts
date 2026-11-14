@@ -15,8 +15,11 @@ import { BIN } from "./meta.js";
 
 const run = promisify(execFile);
 
-/** The vault cache is refreshed from the server when it's older than this. */
+/** The vault cache is refreshed from the server when the last attempt is older than this. */
 const SYNC_MAX_AGE_MS = 5 * 60_000;
+
+/** A sync that takes longer than this is abandoned, e.g. when the server is behind a VPN that is down. */
+const SYNC_TIMEOUT_MS = 20_000;
 
 export class BwError extends Error {
   override name = "BwError";
@@ -74,12 +77,13 @@ export function createBw(profile: string) {
   const syncStamp = join(dataDir, "last-sync");
 
   /** Runs one bw command and returns the `data` of its JSON response. */
-  async function bw(args: string[], env: Record<string, string> = {}): Promise<unknown> {
+  async function bw(args: string[], env: Record<string, string> = {}, timeout?: number): Promise<unknown> {
     const session = (await readIfExists(sessionFile)) ?? "";
     const output = await run(process.execPath, [bwScript(), ...args, "--response", "--nointeraction"], {
       // An empty BW_SESSION makes bw report "locked" instead of inheriting a session from the caller's shell.
       env: { ...process.env, BW_SESSION: session, ...env, BITWARDENCLI_APPDATA_DIR: dataDir },
       maxBuffer: 256 * 1024 * 1024,
+      timeout,
     }).catch((error: unknown) => {
       // bw exits non-zero on failure but still prints its JSON response.
       if (error && typeof error === "object" && "stdout" in error && typeof error.stdout === "string") return { stdout: error.stdout };
@@ -101,9 +105,10 @@ export function createBw(profile: string) {
     throw new BwError(response.message);
   }
 
+  /** Pulls the vault from the server. The stamp records the attempt, so an unreachable server is retried every SYNC_MAX_AGE_MS, not on every call. */
   async function sync(): Promise<void> {
-    await bw(["sync"]);
     await writePrivate(syncStamp, "");
+    await bw(["sync"], {}, SYNC_TIMEOUT_MS);
   }
 
   return {
@@ -130,7 +135,8 @@ export function createBw(profile: string) {
         throw error;
       });
       await writePrivate(sessionFile, z.object({ raw: z.string() }).parse(data).raw);
-      await sync();
+      // Unlocking works offline, so an unreachable server doesn't fail it.
+      await sync().catch(() => undefined);
     },
 
     /** Locks the vault and deletes the session key. */
@@ -148,13 +154,17 @@ export function createBw(profile: string) {
 
     sync,
 
-    /** Syncs when the cache is older than SYNC_MAX_AGE_MS, so rotated secrets show up without a manual sync. */
+    /**
+     * Syncs when the last attempt is older than SYNC_MAX_AGE_MS, so rotated secrets
+     * show up on their own. If the sync fails or times out, the cache is used as
+     * it is. A locked vault still fails on the next read.
+     */
     async syncIfStale(): Promise<void> {
       const age = await stat(syncStamp).then(
         (stamp) => Date.now() - stamp.mtimeMs,
         () => Infinity,
       );
-      if (age > SYNC_MAX_AGE_MS) await sync();
+      if (age > SYNC_MAX_AGE_MS) await sync().catch(() => undefined);
     },
 
     /** Every item in the vault, decrypted. Items in the trash are left out by bw. */

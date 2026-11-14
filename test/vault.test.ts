@@ -22,8 +22,10 @@ describe("search", () => {
     const result = await vault.search("cloudflare");
     expect(result.items.map((item) => item.ref)).toEqual(["bw://work/id-cloudflare", "bw://work/id-cloudflare-2"]);
     expect(result.items[0]).toMatchObject({ username: "deploy@example.com", fields: ["api token", "username", "password", "uri", "notes", "totp"] });
-    const text = JSON.stringify(result);
-    for (const secret of [SECRET, TOKEN, "deploy notes", "JBSWY3DPEHPK3PXP"]) expect(text).not.toContain(secret);
+    // URIs lose their userinfo and query, where connection strings and webhook URLs carry credentials.
+    expect(result.items[0]?.uris).toEqual(["https://dash.cloudflare.com/login"]);
+    const text = JSON.stringify(await vault.search(""));
+    for (const secret of [SECRET, TOKEN, "deploy notes", "JBSWY3DPEHPK3PXP", "uri-pass", "uri-key", "db-pass"]) expect(text).not.toContain(secret);
   });
 
   it("only sees items in the profile's scope, by folder or collection", async () => {
@@ -43,6 +45,13 @@ describe("search", () => {
     const result = await vault.search("bank");
     expect(result.items.map((item) => item.ref)).toEqual(["bw://work/id-bank"]);
     expect(result.unavailable).toEqual([{ profile: "personal", reason: "locked" }]);
+  });
+});
+
+describe("getProfile", () => {
+  it("doesn't match names every object inherits", async () => {
+    const { vault } = testVault({ work: SERVER });
+    await expect(vault.read("bw://constructor/Bank/username")).rejects.toThrow(/No profile named "constructor"/);
   });
 });
 
@@ -82,18 +91,23 @@ describe("resolveForRun", () => {
 });
 
 describe("read", () => {
-  it("returns usernames and URIs without reveal", async () => {
+  it("returns a login's username without reveal", async () => {
     const { vault, audits } = testVault({ work: SERVER });
     expect(await vault.read("bw://work/Bank/username")).toBe("me");
-    expect(await vault.read("bw://work/id-cloudflare/uri")).toBe("https://dash.cloudflare.com");
     expect(audits).toEqual([]);
   });
 
   it("refuses every other field unless the profile allows reveal", async () => {
     const { vault } = testVault({ work: SERVER });
-    for (const field of ["password", "totp", "notes", "api token"]) {
+    for (const field of ["password", "totp", "uri", "notes", "api token"]) {
       await expect(vault.read(`bw://work/id-cloudflare/${field}`)).rejects.toThrow(/doesn't allow reading secrets/);
     }
+  });
+
+  it("doesn't treat a custom field named username as public", async () => {
+    const { vault } = testVault({ work: SERVER });
+    await expect(vault.read("bw://work/DB/username")).rejects.toThrow(/has no field "username"/);
+    await expect(vault.read("bw://work/DB/uri")).rejects.toThrow(/doesn't allow reading secrets/);
   });
 
   it("returns a secret, and audits it, when reveal is on", async () => {

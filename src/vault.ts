@@ -39,8 +39,8 @@ export function parseRef(ref: string): Ref {
   }
 }
 
-/** Fields that identify an account without granting access to it. `read` returns these without `reveal`. */
-const PUBLIC_FIELDS = new Set(["username", "uri"]);
+/** The one field that identifies an account without granting access to it. `read` returns it without `reveal`. */
+const PUBLIC_FIELD = "username";
 
 const TOTP = "totp";
 
@@ -68,7 +68,20 @@ function storedFields(item: Item): Map<string, string> {
   for (const [name, value] of Object.entries(builtIn)) {
     if (value) fields.set(name, value);
   }
+  // The public field is only ever the login's own username, never a custom field that borrowed the name.
+  if (!item.login?.username) fields.delete(PUBLIC_FIELD);
   return fields;
+}
+
+/** A URI without its userinfo and query, where connection strings and webhook URLs keep credentials. */
+function displayUri(uri: string): string {
+  try {
+    const url = new URL(uri);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    // Not a URL, e.g. an Android app ID.
+    return uri.replace(/[?#].*$/, "");
+  }
 }
 
 /** Field names an agent can reference on an item. `totp` is the current one-time code, computed on use. */
@@ -84,7 +97,7 @@ export interface ItemSummary {
 }
 
 function summarize(profile: string, item: Item): ItemSummary {
-  const uris = item.login?.uris?.flatMap(({ uri }) => (uri ? [uri] : [])) ?? [];
+  const uris = item.login?.uris?.flatMap(({ uri }) => (uri ? [displayUri(uri)] : [])) ?? [];
   return {
     ref: `${SCHEME}${profile}/${item.id}`,
     name: item.name,
@@ -109,7 +122,8 @@ export function createVault({ loadConfig, bw, audit }: VaultDeps) {
   /** A profile's items, limited to its scope. `fresh` forces a sync first. */
   async function loadItems(name: string, profile: Profile, fresh = false): Promise<Item[]> {
     const client = bw(name);
-    await (fresh ? client.sync() : client.syncIfStale());
+    // Best effort either way: with the server unreachable, the cache still answers.
+    await (fresh ? client.sync().catch(() => undefined) : client.syncIfStale());
     if (!profile.scope?.length) return client.items();
 
     const [items, folders, collections] = await Promise.all([client.items(), client.folders(), client.collections()]);
@@ -184,7 +198,7 @@ export function createVault({ loadConfig, bw, audit }: VaultDeps) {
 
     /**
      * Finds items whose name, username or URI contains `query`, in one profile
-     * or all of them. Returns names and field names, never values. A profile
+     * or all of them. Returns names, usernames, trimmed URIs and field names, never other values. A profile
      * that can't be searched (locked, unreachable) is reported, not fatal.
      */
     async search(query: string, only?: string) {
@@ -224,13 +238,13 @@ export function createVault({ loadConfig, bw, audit }: VaultDeps) {
 
     /**
      * Returns one field's value to the caller, which for an agent means into
-     * its context. Usernames and URIs are always readable. Anything else needs
+     * its context. A login's username is always readable. Anything else needs
      * the profile's `reveal` setting.
      */
     async read(ref: string): Promise<string> {
       const parsed = parseRef(ref);
       const profile = getProfile(await loadConfig(), parsed.profile);
-      if (!PUBLIC_FIELDS.has(parsed.field) && !profile.reveal) {
+      if (parsed.field !== PUBLIC_FIELD && !profile.reveal) {
         throw new VaultError(
           `"${parsed.field}" is a secret and the "${parsed.profile}" profile doesn't allow reading secrets. ` +
             `Use it without reading it: ${BIN} run --env NAME=${ref} -- <command>. ` +
@@ -238,7 +252,7 @@ export function createVault({ loadConfig, bw, audit }: VaultDeps) {
         );
       }
       const [value = ""] = await resolveRefs([parsed]);
-      if (!PUBLIC_FIELDS.has(parsed.field)) await audit({ action: "read", refs: [ref] });
+      if (parsed.field !== PUBLIC_FIELD) await audit({ action: "read", refs: [ref] });
       return value;
     },
   };

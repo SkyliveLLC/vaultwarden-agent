@@ -1,8 +1,6 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 
-export const PACKAGE_NAME = "@skylivellc/vaultwarden-agent";
-
 /** The command people and agents type. */
 export const BIN = "vaultwarden-agent";
 

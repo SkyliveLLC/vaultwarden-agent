@@ -7,13 +7,15 @@ import { spawn } from "node:child_process";
 import { constants } from "node:os";
 import { VaultError } from "./vault.js";
 
-/** Shorter values would mask ordinary output, e.g. every "1" for a one-character field. */
+/** Shorter values, such as a card's three-digit code, are not masked: they would garble ordinary output. */
 const MIN_REDACT_LENGTH = 4;
 
 /**
  * Returns a stream filter that replaces each secret with `[redacted:NAME]`.
  * A secret can be split across chunks, so the filter holds back any tail that
- * could be the start of one until the next chunk or `flush` settles it.
+ * could be the start of one until the next chunk or `flush` settles it. The
+ * held text stays unmasked, so that a short secret inside a longer one can't
+ * be masked first and break up the longer match.
  * Text is handled as latin1 so arbitrary bytes pass through unchanged.
  */
 export function createRedactor(secrets: Record<string, string>) {
@@ -24,7 +26,19 @@ export function createRedactor(secrets: Record<string, string>) {
     .sort((a, b) => b.value.length - a.value.length);
   let pending = "";
 
-  const mask = (text: string) => targets.reduce((result, { value, mask }) => result.replaceAll(value, mask), text);
+  /** Masks `text` up to `end`, and returns the masked part with the index where the unmasked rest begins. */
+  function mask(text: string, end: number): { masked: string; rest: number } {
+    let masked = "";
+    let index = 0;
+    while (index < end) {
+      const target = targets.find(({ value }) => text.startsWith(value, index));
+      // A secret that runs past `end` overlaps the held tail: hold all of it, so the next chunk can still extend it.
+      if (target && index + target.value.length > end) break;
+      masked += target ? target.mask : text[index];
+      index += target ? target.value.length : 1;
+    }
+    return { masked, rest: index };
+  }
 
   /** Length of the longest tail of `text` that is a proper prefix of a secret. */
   function heldLength(text: string): number {
@@ -39,31 +53,32 @@ export function createRedactor(secrets: Record<string, string>) {
 
   return {
     write(chunk: Buffer): Buffer {
-      const text = mask(pending + chunk.toString("latin1"));
-      const held = heldLength(text);
-      pending = text.slice(text.length - held);
-      return Buffer.from(text.slice(0, text.length - held), "latin1");
+      const text = pending + chunk.toString("latin1");
+      const { masked, rest } = mask(text, text.length - heldLength(text));
+      pending = text.slice(rest);
+      return Buffer.from(masked, "latin1");
     },
     flush(): Buffer {
-      const rest = Buffer.from(pending, "latin1");
+      const { masked } = mask(pending, pending.length);
       pending = "";
-      return rest;
+      return Buffer.from(masked, "latin1");
     },
   };
 }
 
 /** Parses `--env NAME=bw://...` values into a name-to-reference map. */
 export function parseEnvFlags(flags: string[]): Record<string, string> {
-  const refs: Record<string, string> = {};
-  for (const flag of flags) {
-    const split = flag.indexOf("=");
-    const name = flag.slice(0, split);
-    if (split < 1 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-      throw new VaultError(`"--env ${flag}" should look like --env NAME=bw://<profile>/<item>/<field>.`);
-    }
-    refs[name] = flag.slice(split + 1);
-  }
-  return refs;
+  // fromEntries makes every name an own property, "__proto__" included.
+  return Object.fromEntries(
+    flags.map((flag) => {
+      const split = flag.indexOf("=");
+      const name = flag.slice(0, split);
+      if (split < 1 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        throw new VaultError(`"--env ${flag}" should look like --env NAME=bw://<profile>/<item>/<field>.`);
+      }
+      return [name, flag.slice(split + 1)];
+    }),
+  );
 }
 
 /**

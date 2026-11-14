@@ -24,8 +24,17 @@ describe("createRedactor", () => {
     expect(redact({ TOKEN: "s3cret-value" }, ["ends with s3cret-val"])).toBe("ends with s3cret-val");
   });
 
-  it("masks the longer secret when one contains another", () => {
-    expect(redact({ SHORT: "abcd", LONG: "abcd-efgh" }, ["abcd-efgh abcd"])).toBe("[redacted:LONG] [redacted:SHORT]");
+  it("masks the longer secret when one contains another, at every split point", () => {
+    const secrets = { USER: "deploy", URL: "postgres://deploy:hunter2@db" };
+    const text = "deploy uses postgres://deploy:hunter2@db as deploy";
+    for (let split = 0; split <= text.length; split++) {
+      expect(redact(secrets, [text.slice(0, split), text.slice(split)])).toBe("[redacted:USER] uses [redacted:URL] as [redacted:USER]");
+    }
+  });
+
+  it("never emits part of a secret while a second secret that overlaps it is still undecided", () => {
+    // "abcdX" is complete, but its tail could still grow into "cdXYZ".
+    expect(redact({ A: "abcdX", B: "cdXYZ" }, ["abcdX", "q"])).toBe("[redacted:A]q");
   });
 
   it("leaves values under four characters alone, since masking them would garble output", () => {
@@ -43,6 +52,10 @@ describe("createRedactor", () => {
 describe("parseEnvFlags", () => {
   it("splits on the first equals sign", () => {
     expect(parseEnvFlags(["A=bw://p/item/field", "B_2=bw://p/x=y/field"])).toEqual({ A: "bw://p/item/field", B_2: "bw://p/x=y/field" });
+  });
+
+  it("keeps a variable named __proto__ instead of dropping it", () => {
+    expect(Object.keys(parseEnvFlags(["__proto__=bw://p/item/field"]))).toEqual(["__proto__"]);
   });
 
   it("rejects a flag without a valid variable name", () => {

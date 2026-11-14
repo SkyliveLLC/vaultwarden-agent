@@ -20,12 +20,12 @@ For agents
   run --env NAME=bw://<profile>/<item>/<field> [--env ...] -- <command> [args]
                        Run a command with secrets in its environment, masked in its output
   search [query]       Find items. Prints references and field names, never values
-  read <reference>     Print a username or URI, or a secret if the profile allows reveal
+  read <reference>     Print a login's username, or any other field if the profile allows reveal
   status               Show each profile and whether it is unlocked
 
 For you
   setup                Log a vault in, choose what agents may use, and register the MCP server
-  unlock [profile]     Unlock with your master password (or BW_PASSWORD without a terminal)
+  unlock [profile]     Unlock with your master password, from a prompt or BW_PASSWORD
   lock [profile]       Lock, so agents can't use the vault until you unlock it again
   logout <profile>     Log out and remove a profile
   serve                Run the MCP server over stdio (the default when an MCP client starts it)

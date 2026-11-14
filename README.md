@@ -34,7 +34,7 @@ Requires Node.js 22 or newer on Linux or macOS. CI runs the whole flow against V
 ```sh
 git clone https://github.com/SkyliveLLC/vaultwarden-agent
 cd vaultwarden-agent
-corepack pnpm install   # installs the bw CLI and builds
+pnpm install            # installs the bw CLI and builds
 npm link                # puts vaultwarden-agent on your PATH
 vaultwarden-agent setup
 ```
@@ -60,7 +60,8 @@ A reference is `bw://<profile>/<item>/<field>`:
 - The item is its exact name or its ID. `search_items` returns ID-based references, which stay valid when two
   items share a name. Write a slash inside a name as `%2F`.
 - The field is `username`, `password`, `totp` (the current one-time code), `uri`, `notes`, the name of a custom
-  field, or a property of a card, identity or SSH key such as `privateKey`.
+  field, or a property of a card, identity or SSH key such as `privateKey`. A built-in name wins over a custom
+  field of the same name.
 
 `run` takes any number of `--env NAME=<reference>` flags and the command after `--`. The command runs
 directly, without a shell. For pipes or variable expansion, run a shell and refer to the variable inside it:
@@ -71,23 +72,27 @@ vaultwarden-agent run --env TOKEN=bw://work/GitHub/password -- \
 ```
 
 The exit code is the command's. `run` goes through the agent's own shell tool, so the agent's permission rules
-and sandbox apply to it like any other command.
+apply to it like any other command. Under a sandbox it needs to write to `~/.config/vaultwarden-agent` (the
+audit log and the vault cache) and to reach your vault server to sync. This hasn't been tested under Codex's
+sandbox.
 
 The MCP server (registered as `vault`) has three tools, all read-only:
 
 | Tool | What it does |
 | --- | --- |
 | `list_profiles` | The configured vaults, whether each is unlocked, and its scope and reveal settings. |
-| `search_items` | Finds items by name, username or URI. Returns references and field names, never values. |
-| `read_field` | Returns a username or URI. Returns a secret only if the profile has reveal on. |
+| `search_items` | Finds items by name, username or URI. Returns references, usernames, URIs and field names, never other values. |
+| `read_field` | Returns a login's username. Returns any other field only if the profile has reveal on. |
 
 Turn reveal on for a profile only when an agent must type a value itself, for example into a browser form
 through computer use. Every other use works through `run`.
 
 ## Unlocking
 
-The vault stays unlocked until you lock it or the machine reboots. When it is locked, agents get an error that
-tells them to ask you:
+On Linux the vault stays unlocked until you lock it or the session key's directory, `/run/user/<uid>`, is
+cleared. That happens on reboot, and also when you log out unless lingering is enabled for your user. On macOS
+the key is a file in the profile's directory, so the vault stays unlocked until you lock it. When it is locked,
+agents get an error that tells them to ask you:
 
 ```sh
 vaultwarden-agent unlock work
@@ -120,7 +125,7 @@ xAI, which this tool doesn't do.
 For agents
   run --env NAME=<reference> [--env ...] -- <command> [args]
   search [query]       Find items. Prints references and field names, never values
-  read <reference>     Print a username or URI, or a secret if the profile allows reveal
+  read <reference>     Print a login's username, or any other field if the profile allows reveal
   status               Show each profile and whether it is unlocked
 
 For you
@@ -139,11 +144,11 @@ vaultwarden-agent setup --profile work --server https://vault.example.com --scop
 
 Rerun setup for a profile to change its scope or reveal setting. To remove everything, run
 `vaultwarden-agent logout <profile>` for each profile, then `claude mcp remove --scope user vault` and
-`codex mcp remove vault`.
+`codex mcp remove vault`, and delete `~/.config/vaultwarden-agent`, which still holds the config and audit log.
 
 Each `bw` call takes about three seconds, so a `run` adds three to seven seconds before your command starts.
 The vault is synced from the server when the local copy is more than five minutes old, and once more when a
-referenced item isn't found.
+referenced item isn't found. If the server can't be reached, the local copy is used as it is.
 
 ## Security
 
@@ -152,18 +157,19 @@ What the tool does:
 - `run` puts secrets in one command's environment and masks them in its output, so they stay out of the
   agent's context, the transcript and the model provider's logs.
 - The master password is never stored. The session key that unlocking produces is kept in a file only you can
-  read, on Linux in the tmpfs runtime directory (`/run/user/<uid>`), so a reboot locks every vault.
-- A profile's scope limits agents to the folders and collections you chose, and reading secret values is off
-  unless you turn reveal on.
+  read. On Linux that file is in the tmpfs runtime directory (`/run/user/<uid>`), so it never reaches disk.
+- A profile's scope limits agents to the folders and collections you chose. Without reveal, an agent can read
+  item names, login usernames, field names and URIs with their userinfo and query removed, and nothing else.
 - Every `run` and every secret read is appended to `~/.config/vaultwarden-agent/audit.log` with the time, the
   references and the command name. Values are never logged.
 - Nothing secret is written to MCP client configs, which are often synced or shared.
 
 What it can't do:
 
-- Masking catches a secret that appears as-is in the output. It doesn't catch one that the command encodes,
-  splits or writes to a file. The server's instructions tell agents not to do that, but an agent that follows a
-  prompt injection could.
+- Masking catches a secret of four or more characters that appears as-is in the output. It doesn't catch a
+  shorter one, such as a card's security code, or one that the command encodes, splits or writes to a file. The
+  server's instructions tell agents not to do that, but an agent that follows a prompt injection could.
+- Item names, usernames and URI hosts and paths are visible to agents. Don't keep a secret in any of them.
 - Agents run as your operating system user, the same user that owns the session key. Scope and reveal are
   enforced by this tool, not by the operating system. An agent that goes around the tool, by reading the
   session key and calling `bw` itself, can read everything the vault account can.

@@ -18,9 +18,9 @@ In scope: the CLI, the MCP server, and how they store the session key and pass s
 interesting:
 
 - a secret value reaching the output of `search`, `status`, an MCP tool result, the audit log or an error message;
-- `read` or `read_field` returning a secret from a profile that has reveal off;
+- `read` or `read_field` returning anything but a login's username from a profile that has reveal off;
 - an item outside a profile's scope being found or resolved through the CLI or the MCP server;
-- a secret that appears as-is in a command's output and isn't masked.
+- a secret of four or more characters that appears as-is in a command's output and isn't masked.
 
 Out of scope: vulnerabilities in the `bw` CLI, Bitwarden or Vaultwarden themselves, and the limits the README
 lists, such as an agent that encodes a secret before printing it or that reads the session key directly.
