@@ -22,10 +22,21 @@ describe("search", () => {
     const result = await vault.search("cloudflare");
     expect(result.items.map((item) => item.ref)).toEqual(["bw://work/id-cloudflare", "bw://work/id-cloudflare-2"]);
     expect(result.items[0]).toMatchObject({ username: "deploy@example.com", fields: ["api token", "username", "password", "uri", "notes", "totp"] });
-    // URIs lose their userinfo and query, where connection strings and webhook URLs carry credentials.
-    expect(result.items[0]?.uris).toEqual(["https://dash.cloudflare.com/login"]);
+    // Only a URI's scheme and host are shown. Connection strings and webhook URLs carry credentials in the rest.
+    expect(result.items[0]?.uris).toEqual(["https://dash.cloudflare.com"]);
     const text = JSON.stringify(await vault.search(""));
     for (const secret of [SECRET, TOKEN, "deploy notes", "JBSWY3DPEHPK3PXP", "uri-pass", "uri-key", "db-pass"]) expect(text).not.toContain(secret);
+  });
+
+  it("matches only what it shows, so a query can't probe the hidden part of a URI", async () => {
+    const { vault } = testVault({ work: SERVER });
+    expect((await vault.search("dash.cloudflare")).items).toHaveLength(1);
+    for (const hidden of ["uri-pass", "uri-key", "login", "nas-pass"]) expect((await vault.search(hidden)).items).toEqual([]);
+  });
+
+  it("shows only the host of a URI saved without a scheme", async () => {
+    const { vault } = testVault({ work: SERVER });
+    expect((await vault.search("NAS")).items[0]?.uris).toEqual(["nas.local:5000"]);
   });
 
   it("only sees items in the profile's scope, by folder or collection", async () => {
@@ -104,10 +115,12 @@ describe("read", () => {
     }
   });
 
-  it("doesn't treat a custom field named username as public", async () => {
+  it("doesn't treat a custom field named username as public, while run can still use it", async () => {
     const { vault } = testVault({ work: SERVER });
-    await expect(vault.read("bw://work/DB/username")).rejects.toThrow(/has no field "username"/);
-    await expect(vault.read("bw://work/DB/uri")).rejects.toThrow(/doesn't allow reading secrets/);
+    for (const field of ["username", "uri"]) {
+      await expect(vault.read(`bw://work/DB/${field}`)).rejects.toThrow(/doesn't allow reading secrets/);
+    }
+    expect(await vault.resolveForRun(["bw://work/DB/username"], "psql")).toEqual(["custom-user-secret"]);
   });
 
   it("returns a secret, and audits it, when reveal is on", async () => {

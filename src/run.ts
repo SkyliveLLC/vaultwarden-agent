@@ -26,16 +26,27 @@ export function createRedactor(secrets: Record<string, string>) {
     .sort((a, b) => b.value.length - a.value.length);
   let pending = "";
 
+  const matchAt = (text: string, index: number) => targets.find(({ value }) => text.startsWith(value, index));
+
   /** Masks `text` up to `end`, and returns the masked part with the index where the unmasked rest begins. */
   function mask(text: string, end: number): { masked: string; rest: number } {
     let masked = "";
     let index = 0;
     while (index < end) {
-      const target = targets.find(({ value }) => text.startsWith(value, index));
-      // A secret that runs past `end` overlaps the held tail: hold all of it, so the next chunk can still extend it.
-      if (target && index + target.value.length > end) break;
-      masked += target ? target.mask : text[index];
-      index += target ? target.value.length : 1;
+      const target = matchAt(text, index);
+      if (!target) {
+        masked += text[index++];
+        continue;
+      }
+      // Secrets that overlap are masked as one span, so the tail of the second can't follow the first's mask.
+      let spanEnd = index + target.value.length;
+      for (let inside = index + 1; inside < spanEnd; inside++) {
+        spanEnd = Math.max(spanEnd, inside + (matchAt(text, inside)?.value.length ?? 0));
+      }
+      // A span that runs past `end` overlaps the held tail: hold all of it, so the next chunk can still extend it.
+      if (spanEnd > end) break;
+      masked += target.mask;
+      index = spanEnd;
     }
     return { masked, rest: index };
   }

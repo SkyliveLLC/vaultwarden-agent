@@ -7,7 +7,7 @@ type AuditEntry = Parameters<VaultDeps["audit"]>[0];
 export const SECRET = "hunter2-cf-PASS";
 export const TOKEN = "cf-SECRET-token-123";
 
-/** A small vault: one item in the "Agents" folder, one in a collection, and three outside both. */
+/** A small vault: one item in the "Agents" folder, one in a collection, and four outside both. */
 export const ITEMS: Item[] = [
   {
     id: "id-cloudflare",
@@ -21,6 +21,7 @@ export const ITEMS: Item[] = [
   { id: "id-bank", name: "Bank", login: { username: "me", password: "bank-pass-999" } },
   // A secure note whose custom fields borrow the names of the login fields.
   { id: "id-db", name: "DB", fields: [{ name: "username", value: "custom-user-secret" }, { name: "uri", value: "postgres://app:db-pass@db/app" }] },
+  { id: "id-nas", name: "NAS", login: { username: "admin", uris: [{ uri: "admin:nas-pass@nas.local:5000/admin" }] } },
   { id: "id-cloudflare-2", name: "Cloudflare", login: { username: "other", password: "other-pass" } },
 ];
 

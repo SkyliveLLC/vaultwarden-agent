@@ -37,6 +37,13 @@ describe("createRedactor", () => {
     expect(redact({ A: "abcdX", B: "cdXYZ" }, ["abcdX", "q"])).toBe("[redacted:A]q");
   });
 
+  it("masks two secrets that overlap as one span, at every split point", () => {
+    const text = "<abcdXYZ>";
+    for (let split = 0; split <= text.length; split++) {
+      expect(redact({ A: "abcdX", B: "cdXYZ" }, [text.slice(0, split), text.slice(split)])).toBe("<[redacted:A]>");
+    }
+  });
+
   it("leaves values under four characters alone, since masking them would garble output", () => {
     expect(redact({ PIN: "123" }, ["port 1234"])).toBe("port 1234");
   });

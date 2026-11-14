@@ -39,8 +39,12 @@ export function parseRef(ref: string): Ref {
   }
 }
 
-/** The one field that identifies an account without granting access to it. `read` returns it without `reveal`. */
-const PUBLIC_FIELD = "username";
+/**
+ * The one value that identifies an account without granting access to it: a
+ * login's own username. `read` returns it without `reveal`. A custom field or
+ * identity property that is merely named `username` is not public.
+ */
+const isPublic = (item: Item, field: string) => field === "username" && Boolean(item.login?.username);
 
 const TOTP = "totp";
 
@@ -68,24 +72,31 @@ function storedFields(item: Item): Map<string, string> {
   for (const [name, value] of Object.entries(builtIn)) {
     if (value) fields.set(name, value);
   }
-  // The public field is only ever the login's own username, never a custom field that borrowed the name.
-  if (!item.login?.username) fields.delete(PUBLIC_FIELD);
   return fields;
 }
 
-/** A URI without its userinfo and query, where connection strings and webhook URLs keep credentials. */
+/**
+ * The part of a URI that search shows and matches: scheme and host. Userinfo,
+ * path and query are dropped, because connection strings and webhook URLs keep
+ * credentials there.
+ */
 function displayUri(uri: string): string {
-  try {
-    const url = new URL(uri);
-    return `${url.protocol}//${url.host}${url.pathname}`;
-  } catch {
-    // Not a URL, e.g. an Android app ID.
-    return uri.replace(/[?#].*$/, "");
+  if (uri.includes("://")) {
+    try {
+      const { protocol, host } = new URL(uri);
+      if (host) return `${protocol}//${host}`;
+    } catch {
+      // Fall through and trim it as plain text.
+    }
   }
+  // No scheme, e.g. "user:pass@nas.local:5000/admin": keep what sits between the userinfo and the path.
+  return uri.replace(/^[^/?#]*@/, "").replace(/[/?#].*$/, "");
 }
 
 /** Field names an agent can reference on an item. `totp` is the current one-time code, computed on use. */
 const fieldNames = (item: Item) => [...new Set([...storedFields(item).keys(), ...(item.login?.totp ? [TOTP] : [])])];
+
+const displayUris = (item: Item) => item.login?.uris?.flatMap(({ uri }) => (uri ? [displayUri(uri)] : [])) ?? [];
 
 export interface ItemSummary {
   /** Reference prefix: append `/<field>`. */
@@ -97,7 +108,7 @@ export interface ItemSummary {
 }
 
 function summarize(profile: string, item: Item): ItemSummary {
-  const uris = item.login?.uris?.flatMap(({ uri }) => (uri ? [displayUri(uri)] : [])) ?? [];
+  const uris = displayUris(item);
   return {
     ref: `${SCHEME}${profile}/${item.id}`,
     name: item.name,
@@ -149,8 +160,8 @@ export function createVault({ loadConfig, bw, audit }: VaultDeps) {
     return named[0];
   }
 
-  /** Resolves parsed references, loading each profile's items once. */
-  async function resolveRefs(refs: Ref[]): Promise<string[]> {
+  /** Resolves parsed references to their values and items, loading each profile's items once. */
+  async function resolveRefs(refs: Ref[]): Promise<{ value: string; item: Item }[]> {
     const config = await loadConfig();
     const loaded = new Map<string, Promise<Item[]>>();
     const load = (name: string, fresh = false) => {
@@ -162,7 +173,7 @@ export function createVault({ loadConfig, bw, audit }: VaultDeps) {
     };
     // Sequential, so a missing item triggers at most one extra sync per profile.
     const synced = new Set<string>();
-    const values: string[] = [];
+    const resolved: { value: string; item: Item }[] = [];
     for (const ref of refs) {
       let item = findItem(await load(ref.profile), ref);
       // The user may have added the item moments ago: sync once before giving up.
@@ -176,9 +187,9 @@ export function createVault({ loadConfig, bw, audit }: VaultDeps) {
       if (value === undefined) {
         throw new VaultError(`"${item.name}" has no field "${ref.field}". It has: ${fieldNames(item).join(", ") || "no fields"}.`);
       }
-      values.push(value);
+      resolved.push({ value, item });
     }
-    return values;
+    return resolved;
   }
 
   return {
@@ -197,8 +208,8 @@ export function createVault({ loadConfig, bw, audit }: VaultDeps) {
     },
 
     /**
-     * Finds items whose name, username or URI contains `query`, in one profile
-     * or all of them. Returns names, usernames, trimmed URIs and field names, never other values. A profile
+     * Finds items whose name, username or URI host contains `query`, in one
+     * profile or all of them. Returns names, usernames, URI hosts and field names, never other values. A profile
      * that can't be searched (locked, unreachable) is reported, not fatal.
      */
     async search(query: string, only?: string) {
@@ -212,7 +223,8 @@ export function createVault({ loadConfig, bw, audit }: VaultDeps) {
         names.map(async (name) => {
           try {
             for (const item of await loadItems(name, getProfile(config, name))) {
-              const haystack = [item.name, item.login?.username, ...(item.login?.uris?.map(({ uri }) => uri) ?? [])];
+              // Match only what the result shows, so a query can't probe the hidden parts of a URI.
+              const haystack = [item.name, item.login?.username, ...displayUris(item)];
               if (haystack.some((value) => value?.toLowerCase().includes(needle))) items.push(summarize(name, item));
             }
           } catch (error) {
@@ -231,9 +243,9 @@ export function createVault({ loadConfig, bw, audit }: VaultDeps) {
 
     /** Resolves references for `run`, which injects the values into a command and never prints them. */
     async resolveForRun(refs: string[], command: string): Promise<string[]> {
-      const values = await resolveRefs(refs.map(parseRef));
+      const resolved = await resolveRefs(refs.map(parseRef));
       await audit({ action: "run", refs, command });
-      return values;
+      return resolved.map(({ value }) => value);
     },
 
     /**
@@ -244,16 +256,18 @@ export function createVault({ loadConfig, bw, audit }: VaultDeps) {
     async read(ref: string): Promise<string> {
       const parsed = parseRef(ref);
       const profile = getProfile(await loadConfig(), parsed.profile);
-      if (parsed.field !== PUBLIC_FIELD && !profile.reveal) {
+      const [resolved] = await resolveRefs([parsed]);
+      if (!resolved) throw new VaultError(`Could not resolve ${ref}.`);
+      if (isPublic(resolved.item, parsed.field)) return resolved.value;
+      if (!profile.reveal) {
         throw new VaultError(
           `"${parsed.field}" is a secret and the "${parsed.profile}" profile doesn't allow reading secrets. ` +
             `Use it without reading it: ${BIN} run --env NAME=${ref} -- <command>. ` +
             "Only the user can change that, by turning on reveal for the profile in setup.",
         );
       }
-      const [value = ""] = await resolveRefs([parsed]);
-      if (parsed.field !== PUBLIC_FIELD) await audit({ action: "read", refs: [ref] });
-      return value;
+      await audit({ action: "read", refs: [ref] });
+      return resolved.value;
     },
   };
 }

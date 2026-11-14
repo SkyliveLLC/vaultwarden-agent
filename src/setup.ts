@@ -58,13 +58,13 @@ async function untilValid<T>(interactive: boolean, attempt: () => Promise<T>): P
 async function unlockProfile(bw: Bw, name: string, interactive: boolean): Promise<void> {
   // The variable wins even in a terminal, because agent shells often run commands in a pty.
   const fromEnv = process.env.BW_PASSWORD;
-  await untilValid(interactive && !fromEnv, async () => {
-    const password =
-      fromEnv ??
-      (interactive
-        ? await ask(p.password({ message: `Master password for "${name}"`, validate: required("the master password") }))
-        : fail("Set BW_PASSWORD when running without a terminal."));
-    await bw.unlock(password);
+  if (fromEnv !== undefined) {
+    if (!fromEnv) fail("BW_PASSWORD is set but empty.");
+    return bw.unlock(fromEnv).catch((error: unknown) => fail(`${errorMessage(error)} The password came from BW_PASSWORD.`));
+  }
+  if (!interactive) fail("Set BW_PASSWORD when running without a terminal.");
+  await untilValid(true, async () => {
+    await bw.unlock(await ask(p.password({ message: `Master password for "${name}"`, validate: required("the master password") })));
   });
 }
 

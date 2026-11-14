@@ -81,7 +81,7 @@ The MCP server (registered as `vault`) has three tools, all read-only:
 | Tool | What it does |
 | --- | --- |
 | `list_profiles` | The configured vaults, whether each is unlocked, and its scope and reveal settings. |
-| `search_items` | Finds items by name, username or URI. Returns references, usernames, URIs and field names, never other values. |
+| `search_items` | Finds items by name, username or URI host. Returns references, usernames, URI hosts and field names, never other values. |
 | `read_field` | Returns a login's username. Returns any other field only if the profile has reveal on. |
 
 Turn reveal on for a profile only when an agent must type a value itself, for example into a browser form
@@ -159,7 +159,7 @@ What the tool does:
 - The master password is never stored. The session key that unlocking produces is kept in a file only you can
   read. On Linux that file is in the tmpfs runtime directory (`/run/user/<uid>`), so it never reaches disk.
 - A profile's scope limits agents to the folders and collections you chose. Without reveal, an agent can read
-  item names, login usernames, field names and URIs with their userinfo and query removed, and nothing else.
+  item names, login usernames, field names and the scheme and host of each URI, and nothing else.
 - Every `run` and every secret read is appended to `~/.config/vaultwarden-agent/audit.log` with the time, the
   references and the command name. Values are never logged.
 - Nothing secret is written to MCP client configs, which are often synced or shared.
@@ -169,7 +169,7 @@ What it can't do:
 - Masking catches a secret of four or more characters that appears as-is in the output. It doesn't catch a
   shorter one, such as a card's security code, or one that the command encodes, splits or writes to a file. The
   server's instructions tell agents not to do that, but an agent that follows a prompt injection could.
-- Item names, usernames and URI hosts and paths are visible to agents. Don't keep a secret in any of them.
+- Item names, login usernames and URI hosts are visible to agents. Don't keep a secret in any of them.
 - Agents run as your operating system user, the same user that owns the session key. Scope and reveal are
   enforced by this tool, not by the operating system. An agent that goes around the tool, by reading the
   session key and calling `bw` itself, can read everything the vault account can.

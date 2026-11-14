@@ -47,7 +47,7 @@ export function createServer(vault: Vault, version: string, command: string = BI
     {
       title: "Search vault items",
       description:
-        "Find items by name, username or URI. Returns each item's reference, name, username, URIs (without userinfo or query) and field names, never secret values. Append /<field> to the reference to use a field.",
+        "Find items by name, username or URI host. Returns each item's reference, name, username, URI hosts and field names, never secret values. Append /<field> to the reference to use a field.",
       inputSchema: z.strictObject({
         query: z.string().describe('Text to match, case-insensitive. "" lists everything.'),
         profile: z.string().optional().describe("Search one profile. Omit to search all."),
