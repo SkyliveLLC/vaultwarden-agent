@@ -7,7 +7,20 @@ type AuditEntry = Parameters<VaultDeps["audit"]>[0];
 export const SECRET = "hunter2-cf-PASS";
 export const TOKEN = "cf-SECRET-token-123";
 
-/** A small vault: one item in the "Agents" folder, one in a collection, and four outside both. */
+/** Every one hides the marker "HIDDEN" in a place a naive host parser would show. */
+export const HOSTILE_URIS = [
+  "https://ops:12#HIDDEN@host.example/path",
+  "https://ops:pa/HIDDEN@host.example",
+  "https://app.example/login?email=me@corp.example&token=HIDDEN",
+  "https://hooks.example/hook?key=user@HIDDEN",
+  "https://site.example/@HIDDEN",
+  "admin:pa#HIDDEN/x@nas.local",
+  "Server=db;UserId=app;Password=HIDDEN;",
+  "ops:HIDDEN",
+  "https://ops:x@host.example\nHIDDEN@evil.example",
+];
+
+/** A small vault: one item in the "Agents" folder, one in a collection, and five outside both. */
 export const ITEMS: Item[] = [
   {
     id: "id-cloudflare",
@@ -15,13 +28,21 @@ export const ITEMS: Item[] = [
     folderId: "folder-agents",
     notes: "deploy notes",
     fields: [{ name: "api token", value: TOKEN }],
-    login: { username: "deploy@example.com", password: SECRET, totp: "JBSWY3DPEHPK3PXP", uris: [{ uri: "https://ops:1234#uri-pass@dash.cloudflare.com/login?key=uri-key" }] },
+    login: { username: "deploy@example.com", password: SECRET, totp: "JBSWY3DPEHPK3PXP", uris: [{ uri: "https://ops:uri-pass@dash.cloudflare.com/login?key=uri-key" }] },
   },
   { id: "id-stripe", name: "Stripe", collectionIds: ["collection-deploy"], login: { username: "ops", password: "sk_live_stripe" } },
   { id: "id-bank", name: "Bank", login: { username: "me", password: "bank-pass-999" } },
   // A secure note whose custom fields borrow the names of the login fields.
   { id: "id-db", name: "DB", fields: [{ name: "username", value: "custom-user-secret" }, { name: "uri", value: "postgres://app:db-pass@db/app" }] },
-  { id: "id-nas", name: "NAS", login: { username: "admin", uris: [{ uri: "admin:nas-pa#ss/w?rd@nas.local:5000/admin" }] } },
+  { id: "id-nas", name: "NAS", login: { username: "admin", uris: [{ uri: "admin:nas-pass@nas.local:5000/admin?key=uri-key" }] } },
+  // URIs whose host can't be told apart from a credential. Search must show and match nothing of them.
+  {
+    id: "id-hostile",
+    name: "Hostile",
+    login: {
+      uris: HOSTILE_URIS.map((uri) => ({ uri })),
+    },
+  },
   { id: "id-cloudflare-2", name: "Cloudflare", login: { username: "other", password: "other-pass" } },
 ];
 

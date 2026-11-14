@@ -25,18 +25,21 @@ describe("search", () => {
     // Only a URI's scheme and host are shown. Connection strings and webhook URLs carry credentials in the rest.
     expect(result.items[0]?.uris).toEqual(["https://dash.cloudflare.com"]);
     const text = JSON.stringify(await vault.search(""));
-    for (const secret of [SECRET, TOKEN, "deploy notes", "JBSWY3DPEHPK3PXP", "uri-pass", "uri-key", "db-pass"]) expect(text).not.toContain(secret);
+    for (const secret of [SECRET, TOKEN, "deploy notes", "JBSWY3DPEHPK3PXP", "uri-pass", "uri-key", "db-pass", "HIDDEN"]) expect(text).not.toContain(secret);
   });
 
   it("matches only what it shows, so a query can't probe the hidden part of a URI", async () => {
     const { vault } = testVault({ work: SERVER });
     expect((await vault.search("dash.cloudflare")).items).toHaveLength(1);
-    for (const hidden of ["uri-pass", "1234", "uri-key", "login", "nas-pa", "w?rd"]) expect((await vault.search(hidden)).items).toEqual([]);
+    expect((await vault.search("NAS")).items[0]?.uris).toEqual(["nas.local:5000"]);
+    for (const hidden of ["uri-pass", "uri-key", "login", "nas-pass"]) expect((await vault.search(hidden)).items).toEqual([]);
   });
 
-  it("shows only the host of a URI saved without a scheme, whatever characters its password has", async () => {
+  it("shows nothing of a URI whose host can't be told apart from a credential", async () => {
     const { vault } = testVault({ work: SERVER });
-    expect((await vault.search("NAS")).items[0]?.uris).toEqual(["nas.local:5000"]);
+    const [hostile] = (await vault.search("Hostile")).items;
+    expect(hostile).toEqual({ ref: "bw://work/id-hostile", name: "Hostile", fields: ["uri"] });
+    expect((await vault.search("HIDDEN")).items).toEqual([]);
   });
 
   it("only sees items in the profile's scope, by folder or collection", async () => {

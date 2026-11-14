@@ -76,18 +76,23 @@ function storedFields(item: Item): Map<string, string> {
   return fields;
 }
 
+/** A hostname, IPv4 address or bracketed IPv6 address, with an optional port. */
+const HOST = /^([\p{L}\p{N}._-]+|\[[0-9a-f:.]+\])(:\d+)?$/iu;
+
 /**
  * The part of a URI that search shows and matches: scheme and host. Userinfo,
  * path and query are dropped, because connection strings and webhook URLs keep
- * credentials there. A password can itself contain `/`, `?` or `#`, so the host
- * is taken to start after the last `@` anywhere in the URI. A path containing
- * `@` then displays wrong, but no part of the userinfo can ever show.
+ * credentials there. It returns "" unless the host is certain. A password can
+ * contain `/`, `?` or `#`, so an `@` after the first of those could end the
+ * userinfo or sit in the path, and such a URI shows nothing. So does anything
+ * whose host part isn't plainly a host, such as a `Key=value;` connection string.
  */
 function displayUri(uri: string): string {
   const scheme = /^[a-z][a-z\d+.-]*:\/\//i.exec(uri)?.[0] ?? "";
-  const afterUserinfo = uri.slice(Math.max(scheme.length, uri.lastIndexOf("@") + 1));
-  const host = afterUserinfo.replace(/[/?#\s][\s\S]*$/, "");
-  return host && scheme + host;
+  const [authority = "", ...rest] = uri.slice(scheme.length).split(/(?=[/?#\s])/);
+  if (rest.join("").includes("@")) return "";
+  const host = authority.slice(authority.lastIndexOf("@") + 1);
+  return HOST.test(host) ? scheme + host : "";
 }
 
 /** Field names an agent can reference on an item. `totp` is the current one-time code, computed on use. */
