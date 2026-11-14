@@ -17,6 +17,9 @@ export const HOSTILE_URIS = [
   "admin:pa#HIDDEN/x@nas.local",
   "Server=db;UserId=app;Password=HIDDEN;",
   "ops:HIDDEN",
+  "/@HIDDEN",
+  "file:///x@HIDDEN",
+  "https://?email=me@HIDDEN",
   "https://ops:x@host.example\nHIDDEN@evil.example",
 ];
 
