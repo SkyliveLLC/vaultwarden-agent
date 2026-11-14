@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  e2e:
+    name: E2E (Vaultwarden ${{ matrix.vaultwarden }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        vaultwarden: ["1.37.5"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Start Vaultwarden ${{ matrix.vaultwarden }} over HTTPS
+        env:
+          VERSION: ${{ matrix.vaultwarden }}
+        run: |
+          # The bw CLI refuses plain http, so serve a self-signed certificate that the test trusts.
+          tls="$RUNNER_TEMP/tls"
+          mkdir -p "$tls"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost" -keyout "$tls/key.pem" -out "$tls/cert.pem"
+          chmod 644 "$tls/key.pem"
+          docker run -d --name vaultwarden -p 127.0.0.1:8443:80 -v "$tls:/tls:ro" \
+            -e 'ROCKET_TLS={certs="/tls/cert.pem",key="/tls/key.pem"}' \
+            -e SIGNUPS_ALLOWED=true -e I_REALLY_WANT_VOLATILE_STORAGE=true "vaultwarden/server:$VERSION"
+          for _ in $(seq 1 30); do curl -sf --cacert "$tls/cert.pem" https://localhost:8443/alive && exit 0; sleep 1; done
+          docker logs vaultwarden
+          exit 1
+      - run: pnpm test:e2e
+        env:
+          VAULTWARDEN_E2E_URL: https://localhost:8443
+          NODE_EXTRA_CA_CERTS: ${{ runner.temp }}/tls/cert.pem
+      - if: failure()
+        run: docker logs vaultwarden
