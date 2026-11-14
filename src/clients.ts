@@ -92,5 +92,5 @@ export const serverCommand = (script: string) => [nodePath(), script];
 /** What an agent types in a shell to run this CLI: its name when installed on PATH, else node and the script path. */
 export function shellCommand(script: string): string {
   if (onPath(BIN, script)) return BIN;
-  return [nodePath(), script].map((part) => (/^[\w./-]+$/.test(part) ? part : `'${part.replaceAll("'", "'\\''")}'`)).join(" ");
+  return [nodePath(), script].map((part) => (/^[\w@%+=:,./-]+$/.test(part) ? part : `'${part.replaceAll("'", "'\\''")}'`)).join(" ");
 }
