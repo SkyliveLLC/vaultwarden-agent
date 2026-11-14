@@ -21,7 +21,7 @@ describe("search", () => {
     const { vault } = testVault({ work: SERVER });
     const result = await vault.search("cloudflare");
     expect(result.items.map((item) => item.ref)).toEqual(["bw://work/id-cloudflare", "bw://work/id-cloudflare-2"]);
-    expect(result.items[0]).toMatchObject({ username: "conan@example.com", fields: ["api token", "username", "password", "uri", "notes", "totp"] });
+    expect(result.items[0]).toMatchObject({ username: "deploy@example.com", fields: ["api token", "username", "password", "uri", "notes", "totp"] });
     const text = JSON.stringify(result);
     for (const secret of [SECRET, TOKEN, "deploy notes", "JBSWY3DPEHPK3PXP"]) expect(text).not.toContain(secret);
   });

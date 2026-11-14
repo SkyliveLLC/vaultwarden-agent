@@ -15,7 +15,7 @@ export const ITEMS: Item[] = [
     folderId: "folder-agents",
     notes: "deploy notes",
     fields: [{ name: "api token", value: TOKEN }],
-    login: { username: "conan@example.com", password: SECRET, totp: "JBSWY3DPEHPK3PXP", uris: [{ uri: "https://dash.cloudflare.com" }] },
+    login: { username: "deploy@example.com", password: SECRET, totp: "JBSWY3DPEHPK3PXP", uris: [{ uri: "https://dash.cloudflare.com" }] },
   },
   { id: "id-stripe", name: "Stripe", collectionIds: ["collection-deploy"], login: { username: "ops", password: "sk_live_stripe" } },
   { id: "id-bank", name: "Bank", login: { username: "me", password: "bank-pass-999" } },

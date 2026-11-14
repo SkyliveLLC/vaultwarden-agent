@@ -100,9 +100,10 @@ agents off immediately.
 ## Grok Bot
 
 Grok Bot runs in xAI's cloud, so it gets no direct line to the vault. It uses your credentials through T3
-Code instead. With the T3 connector from [t3-and-grok-bot](https://github.com/StivenKN/t3-and-grok-bot) set up,
-Grok Bot starts or messages a T3 thread, and the agent in that thread uses the vault on your machine. Secrets
-stay on the machine and Grok Bot only sees results. Tell Grok Bot once:
+Code instead. Add T3 Code's MCP server to Grok Bot as a custom connector (the URL is under **Settings →
+Connections → Copy MCP URL** in T3 Code). Grok Bot can then start or message a T3 thread, and the agent in that
+thread uses the vault on your machine. Secrets stay on the machine and Grok Bot only sees results. Tell Grok
+Bot once:
 
 ```text
 Remember: my credentials live in a vault that my T3 Code agents can use. When a task needs one of my
