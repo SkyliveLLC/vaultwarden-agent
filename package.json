@@ -1,0 +1,54 @@
+{
+  "name": "@skylivellc/vaultwarden-agent",
+  "version": "0.1.0",
+  "description": "Lets AI coding agents use credentials from Bitwarden and Vaultwarden without reading them. A CLI and MCP server built on the official bw CLI.",
+  "keywords": [
+    "bitwarden",
+    "vaultwarden",
+    "mcp",
+    "model-context-protocol",
+    "secrets",
+    "credentials",
+    "claude-code",
+    "codex",
+    "t3-code"
+  ],
+  "license": "MIT",
+  "author": "Skylive LLC",
+  "homepage": "https://github.com/SkyliveLLC/vaultwarden-agent#readme",
+  "bugs": "https://github.com/SkyliveLLC/vaultwarden-agent/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SkyliveLLC/vaultwarden-agent.git"
+  },
+  "type": "module",
+  "bin": {
+    "vaultwarden-agent": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@12.16.1",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc",
+    "test": "vitest run",
+    "test:e2e": "tsc -p tsconfig.build.json && vitest run test/e2e.test.ts"
+  },
+  "dependencies": {
+    "@bitwarden/cli": "^2026.10.1",
+    "@clack/prompts": "^1.9.0",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

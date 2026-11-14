@@ -1,0 +1,255 @@
+/**
+ * Finds items and resolves `bw://profile/item/field` references to values,
+ * applying each profile's scope and reveal settings. Both the CLI and the MCP
+ * server go through here, so the rules are the same for each.
+ */
+import { appendFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { Bw, Item } from "./bw.js";
+import { type Config, configDir, getProfile, type Profile } from "./config.js";
+import { BIN, errorMessage } from "./meta.js";
+
+export class VaultError extends Error {
+  override name = "VaultError";
+}
+
+export interface Ref {
+  profile: string;
+  /** Item ID or exact item name. */
+  item: string;
+  field: string;
+}
+
+const SCHEME = "bw://";
+
+/**
+ * Parses `bw://profile/item/field`. Item and field are percent-decoded, so a
+ * name containing a slash is written with %2F. Spaces can be written as they are.
+ */
+export function parseRef(ref: string): Ref {
+  const parts = ref.startsWith(SCHEME) ? ref.slice(SCHEME.length).split("/") : [];
+  const [profile, item, field] = parts;
+  if (parts.length !== 3 || !profile || !item || !field) {
+    throw new VaultError(`"${ref}" is not a reference. Use bw://<profile>/<item name or id>/<field>, e.g. bw://work/GitHub/password.`);
+  }
+  try {
+    return { profile, item: decodeURIComponent(item), field: decodeURIComponent(field) };
+  } catch {
+    throw new VaultError(`"${ref}" has a malformed percent-escape.`);
+  }
+}
+
+/** Fields that identify an account without granting access to it. `read` returns these without `reveal`. */
+const PUBLIC_FIELDS = new Set(["username", "uri"]);
+
+const TOTP = "totp";
+
+/**
+ * An item's stored fields by name: custom fields, the properties of a card,
+ * identity or SSH key (e.g. `privateKey`), then `username`, `password`, `uri`
+ * and `notes`. A built-in name wins over a custom field of the same name.
+ */
+function storedFields(item: Item): Map<string, string> {
+  const fields = new Map<string, string>();
+  for (const { name, value } of item.fields ?? []) {
+    if (name && value && !fields.has(name)) fields.set(name, value);
+  }
+  for (const section of [item.card, item.identity, item.sshKey]) {
+    for (const [name, value] of Object.entries(section ?? {})) {
+      if (typeof value === "string" && value) fields.set(name, value);
+    }
+  }
+  const builtIn = {
+    username: item.login?.username,
+    password: item.login?.password,
+    uri: item.login?.uris?.[0]?.uri,
+    notes: item.notes,
+  };
+  for (const [name, value] of Object.entries(builtIn)) {
+    if (value) fields.set(name, value);
+  }
+  return fields;
+}
+
+/** Field names an agent can reference on an item. `totp` is the current one-time code, computed on use. */
+const fieldNames = (item: Item) => [...new Set([...storedFields(item).keys(), ...(item.login?.totp ? [TOTP] : [])])];
+
+export interface ItemSummary {
+  /** Reference prefix: append `/<field>`. */
+  ref: string;
+  name: string;
+  username?: string;
+  uris?: string[];
+  fields: string[];
+}
+
+function summarize(profile: string, item: Item): ItemSummary {
+  const uris = item.login?.uris?.flatMap(({ uri }) => (uri ? [uri] : [])) ?? [];
+  return {
+    ref: `${SCHEME}${profile}/${item.id}`,
+    name: item.name,
+    ...(item.login?.username && { username: item.login.username }),
+    ...(uris.length > 0 && { uris }),
+    fields: fieldNames(item),
+  };
+}
+
+export interface VaultDeps {
+  loadConfig: () => Promise<Config>;
+  bw: (profile: string) => Bw;
+  /** Records which references were used and by what. Never receives values. */
+  audit: (entry: { action: "run" | "read"; refs: string[]; command?: string }) => Promise<void>;
+}
+
+const SEARCH_LIMIT = 50;
+
+export type Vault = ReturnType<typeof createVault>;
+
+export function createVault({ loadConfig, bw, audit }: VaultDeps) {
+  /** A profile's items, limited to its scope. `fresh` forces a sync first. */
+  async function loadItems(name: string, profile: Profile, fresh = false): Promise<Item[]> {
+    const client = bw(name);
+    await (fresh ? client.sync() : client.syncIfStale());
+    if (!profile.scope?.length) return client.items();
+
+    const [items, folders, collections] = await Promise.all([client.items(), client.folders(), client.collections()]);
+    const containers = [...folders, ...collections];
+    const unknown = profile.scope.filter((name) => !containers.some((container) => container.name === name));
+    // A scope that matches nothing is more likely a typo than a wish to expose nothing, so say so.
+    if (unknown.length > 0) {
+      throw new VaultError(`Profile "${name}" is scoped to ${unknown.map((n) => `"${n}"`).join(", ")}, but the vault has no folder or collection with that name.`);
+    }
+    const allowed = new Set(containers.filter((container) => profile.scope?.includes(container.name)).map((container) => container.id));
+    return items.filter((item) => [item.folderId, ...(item.collectionIds ?? [])].some((id) => id && allowed.has(id)));
+  }
+
+  function findItem(items: Item[], ref: Ref): Item | undefined {
+    const byId = items.find((item) => item.id === ref.item);
+    if (byId) return byId;
+    const named = items.filter((item) => item.name === ref.item);
+    if (named.length > 1) {
+      throw new VaultError(
+        `${named.length} items in "${ref.profile}" are named "${ref.item}". Reference one by ID: ${named.map((item) => item.id).join(", ")}.`,
+      );
+    }
+    return named[0];
+  }
+
+  /** Resolves parsed references, loading each profile's items once. */
+  async function resolveRefs(refs: Ref[]): Promise<string[]> {
+    const config = await loadConfig();
+    const loaded = new Map<string, Promise<Item[]>>();
+    const load = (name: string, fresh = false) => {
+      const cached = fresh ? undefined : loaded.get(name);
+      if (cached) return cached;
+      const items = loadItems(name, getProfile(config, name), fresh);
+      loaded.set(name, items);
+      return items;
+    };
+    // Sequential, so a missing item triggers at most one extra sync per profile.
+    const synced = new Set<string>();
+    const values: string[] = [];
+    for (const ref of refs) {
+      let item = findItem(await load(ref.profile), ref);
+      // The user may have added the item moments ago: sync once before giving up.
+      if (!item && !synced.has(ref.profile)) {
+        synced.add(ref.profile);
+        item = findItem(await load(ref.profile, true), ref);
+      }
+      if (!item) throw new VaultError(`No item "${ref.item}" in "${ref.profile}"${scopeNote(getProfile(config, ref.profile))}.`);
+
+      const value = ref.field === TOTP && item.login?.totp ? await bw(ref.profile).totp(item.id) : storedFields(item).get(ref.field);
+      if (value === undefined) {
+        throw new VaultError(`"${item.name}" has no field "${ref.field}". It has: ${fieldNames(item).join(", ") || "no fields"}.`);
+      }
+      values.push(value);
+    }
+    return values;
+  }
+
+  return {
+    /** Each profile with its server, settings and whether it is unlocked. */
+    async profiles() {
+      const { profiles } = await loadConfig();
+      return Promise.all(
+        Object.entries(profiles).map(async ([name, profile]) => ({
+          name,
+          ...profile,
+          status: await bw(name)
+            .status()
+            .then(({ status }) => status, errorMessage),
+        })),
+      );
+    },
+
+    /**
+     * Finds items whose name, username or URI contains `query`, in one profile
+     * or all of them. Returns names and field names, never values. A profile
+     * that can't be searched (locked, unreachable) is reported, not fatal.
+     */
+    async search(query: string, only?: string) {
+      const config = await loadConfig();
+      const names = only ? [only] : Object.keys(config.profiles);
+      if (names.length === 0) throw new VaultError(`No vault is configured. Ask the user to run \`${BIN} setup\` in a terminal.`);
+      const needle = query.trim().toLowerCase();
+      const items: ItemSummary[] = [];
+      const unavailable: { profile: string; reason: string }[] = [];
+      await Promise.all(
+        names.map(async (name) => {
+          try {
+            for (const item of await loadItems(name, getProfile(config, name))) {
+              const haystack = [item.name, item.login?.username, ...(item.login?.uris?.map(({ uri }) => uri) ?? [])];
+              if (haystack.some((value) => value?.toLowerCase().includes(needle))) items.push(summarize(name, item));
+            }
+          } catch (error) {
+            if (only) throw error;
+            unavailable.push({ profile: name, reason: errorMessage(error) });
+          }
+        }),
+      );
+      items.sort((a, b) => a.name.localeCompare(b.name));
+      return {
+        items: items.slice(0, SEARCH_LIMIT),
+        ...(items.length > SEARCH_LIMIT && { truncated: `${items.length} matches. Narrow the query to see the rest.` }),
+        ...(unavailable.length > 0 && { unavailable }),
+      };
+    },
+
+    /** Resolves references for `run`, which injects the values into a command and never prints them. */
+    async resolveForRun(refs: string[], command: string): Promise<string[]> {
+      const values = await resolveRefs(refs.map(parseRef));
+      await audit({ action: "run", refs, command });
+      return values;
+    },
+
+    /**
+     * Returns one field's value to the caller, which for an agent means into
+     * its context. Usernames and URIs are always readable. Anything else needs
+     * the profile's `reveal` setting.
+     */
+    async read(ref: string): Promise<string> {
+      const parsed = parseRef(ref);
+      const profile = getProfile(await loadConfig(), parsed.profile);
+      if (!PUBLIC_FIELDS.has(parsed.field) && !profile.reveal) {
+        throw new VaultError(
+          `"${parsed.field}" is a secret and the "${parsed.profile}" profile doesn't allow reading secrets. ` +
+            `Use it without reading it: ${BIN} run --env NAME=${ref} -- <command>. ` +
+            "Only the user can change that, by turning on reveal for the profile in setup.",
+        );
+      }
+      const [value = ""] = await resolveRefs([parsed]);
+      if (!PUBLIC_FIELDS.has(parsed.field)) await audit({ action: "read", refs: [ref] });
+      return value;
+    },
+  };
+}
+
+const scopeNote = (profile: Profile) => (profile.scope?.length ? ` within its scope (${profile.scope.join(", ")})` : "");
+
+/** Appends to the audit log: one JSON line per use, with references and the command name but never a value. */
+export function fileAudit(): VaultDeps["audit"] {
+  return async (entry) => {
+    const path = join(configDir(), "audit.log");
+    await appendFile(path, `${JSON.stringify({ time: new Date().toISOString(), ...entry })}\n`, { mode: 0o600 });
+  };
+}
