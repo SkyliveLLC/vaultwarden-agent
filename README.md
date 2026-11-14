@@ -32,7 +32,10 @@ Requires Node.js 22 or newer on Linux or macOS. CI runs the whole flow against V
 ## Install and set up
 
 ```sh
-npm install -g github:SkyliveLLC/vaultwarden-agent
+git clone https://github.com/SkyliveLLC/vaultwarden-agent
+cd vaultwarden-agent
+corepack pnpm install   # installs the bw CLI and builds
+npm link                # puts vaultwarden-agent on your PATH
 vaultwarden-agent setup
 ```
 
